@@ -1,7 +1,6 @@
 # Tensor-Valued Object Detection Transformer
 
-This folder contains a runnable skeleton for an object-detection transformer that ingests YOLO-style labels.
-It provides:
+This folder contains a runnable skeleton for an object-detection transformer that ingests YOLO-style labels. It is **Windows-first** and ships PowerShell helpers only. It provides:
 
 - A dataset loader that reads images plus `*.txt` YOLO labels.
 - An encoder that flattens images to tensors and feeds a multi-head attention stack.
