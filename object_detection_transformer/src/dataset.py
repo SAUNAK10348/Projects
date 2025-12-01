@@ -33,18 +33,8 @@ class YoloDataset(Dataset):
         self.data_dir = data_dir
         self.image_size = image_size
         self.max_detections = max_detections
-
-        images_dir = data_dir / "images"
-        labels_dir = data_dir / "labels"
-        if not images_dir.exists():
-            raise FileNotFoundError(f"Missing images directory: {images_dir}")
-        if not labels_dir.exists():
-            raise FileNotFoundError(f"Missing labels directory: {labels_dir}")
-
-        self.image_paths = sorted(images_dir.glob("*.jpg"))
-        if not self.image_paths:
-            raise FileNotFoundError(f"No training images found in {images_dir}")
-        self.label_paths = {p.stem: p for p in labels_dir.glob("*.txt")}
+        self.image_paths = sorted((data_dir / "images").glob("*.jpg"))
+        self.label_paths = {p.stem: p for p in (data_dir / "labels").glob("*.txt")}
         self.transforms = transforms_override or transforms.Compose(
             [
                 transforms.Resize((image_size, image_size)),
