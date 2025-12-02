@@ -1,0 +1,141 @@
+HOW TO USE: Tensor-Valued Object Detection Transformer
+=====================================================
+This guide walks through environment setup, dataset preparation, training, testing, inference, and real-time demos on both Windows (PowerShell) and Linux/macOS (Bash). It assumes a YOLO-style dataset layout with `images/` and `labels/` directories under a single dataset root.
+
+0) Prerequisites
+----------------
+- Python 3.10+ installed on your machine or Codespace.
+- (Optional) CUDA-capable GPU and drivers for faster training/inference.
+- Git installed if you plan to clone the repository.
+
+1) Clone and enter the project
+------------------------------
+```bash
+git clone <your-fork-url> object_detection_transformer
+cd object_detection_transformer
+```
+
+2) Prepare your dataset
+-----------------------
+Place your YOLO-formatted data under a single folder:
+```
+<dataset_root>/images/*.jpg   # or .png
+<dataset_root>/labels/*.txt   # YOLO format: class x_center y_center width height (normalized)
+```
+Make sure every image file has a matching label file with the same basename (e.g., `cat.jpg` <-> `cat.txt`).
+
+3) Create and activate the virtual environment
+----------------------------------------------
+Windows (PowerShell):
+```pwsh
+./scripts/setup_workspace.ps1
+./.venv/Scripts/Activate.ps1
+```
+Linux/macOS (Bash):
+```bash
+./scripts/setup_workspace.sh
+source .venv/bin/activate
+```
+
+4) Train the model
+------------------
+Replace paths and hyperparameters as needed. The scripts will create a `checkpoints/` folder if it does not exist.
+
+Windows (PowerShell):
+```pwsh
+./scripts/train.ps1 C:\data\yolo --epochs 50 --batch-size 16 --num-classes 80 --num-queries 25 --device cpu
+```
+
+Linux/macOS (Bash):
+```bash
+./scripts/train.sh /path/to/data/yolo --epochs 50 --batch-size 16 --num-classes 80 --num-queries 25 --device cpu
+```
+
+Notes:
+- Set `--device cuda` if you have a CUDA GPU available.
+- Reduce `--num-queries`, `--image-size`, or `--batch-size` if you need lower latency or have limited memory.
+- Training outputs a checkpoint at `checkpoints/det_transformer.pt` plus optimizer state for potential resume.
+
+5) Run tests / sanity checks
+----------------------------
+After edits or before pushing, run a quick module sanity check:
+```bash
+python -m compileall src
+```
+
+6) Single-image inference
+-------------------------
+Load a trained checkpoint and run inference on an image. Provide label names in order of class indices used during training.
+
+Windows (PowerShell):
+```pwsh
+python -m src.inference checkpoints/det_transformer.pt C:\data\yolo\images\sample.jpg --labels person car dog --confidence 0.4
+```
+
+Linux/macOS (Bash):
+```bash
+python -m src.inference checkpoints/det_transformer.pt /path/to/data/yolo/images/sample.jpg --labels person car dog --confidence 0.4
+```
+
+7) Batch evaluation helper
+--------------------------
+Run inference across a folder of images.
+
+Windows (PowerShell):
+```pwsh
+Get-ChildItem C:\data\yolo\images\*.jpg | ForEach-Object {
+    python -m src.inference checkpoints/det_transformer.pt $_.FullName --labels person car dog --confidence 0.4
+}
+```
+
+Linux/macOS (Bash):
+```bash
+for img in /path/to/data/yolo/images/*.jpg; do
+    python -m src.inference checkpoints/det_transformer.pt "$img" --labels person car dog --confidence 0.4
+done
+```
+
+8) Real-time demo (webcam or video file)
+----------------------------------------
+Stream detections with OpenCV overlays. The `--camera` argument is the integer index of your webcam; use `--video <path>` to process a file instead.
+
+Windows (PowerShell):
+```pwsh
+./scripts/realtime.ps1 checkpoints/det_transformer.pt --labels person car dog --camera 0 --confidence 0.4 --no-window:$false
+```
+
+Linux/macOS (Bash):
+```bash
+./scripts/realtime.sh checkpoints/det_transformer.pt --labels person car dog --camera 0 --confidence 0.4 --no-window false
+```
+
+Performance tips:
+- Lower `--image-size` (e.g., 416) and `--num-queries` (e.g., 15) to improve FPS.
+- Prefer GPU (`--device cuda`) for 60 FPS targets; CPU mode is best for functional tests.
+
+9) Codespaces quickstart
+------------------------
+1. Open a terminal in the Codespace and run:
+   ```bash
+   ./scripts/setup_workspace.sh
+   source .venv/bin/activate
+   ```
+2. Train:
+   ```bash
+   ./scripts/train.sh /workspaces/<repo>/data/yolo --epochs 1 --batch-size 4 --num-classes 80 --num-queries 25
+   ```
+3. Inference:
+   ```bash
+   python -m src.inference checkpoints/det_transformer.pt /workspaces/<repo>/data/yolo/images/sample.jpg --labels person car dog
+   ```
+4. Real-time demo:
+   ```bash
+   ./scripts/realtime.sh checkpoints/det_transformer.pt --labels person car dog --camera 0 --confidence 0.4
+   ```
+
+10) Troubleshooting
+-------------------
+- **Missing data**: Ensure both `images/` and `labels/` exist and have matching basenames.
+- **No camera found**: Try a different `--camera` index or use `--video <path>`.
+- **Slow FPS**: Reduce `--image-size`, `--num-queries`, or `--batch-size`; switch to GPU if available.
+- **Import errors**: Re-run `pip install -r requirements.txt` inside the virtual environment.
