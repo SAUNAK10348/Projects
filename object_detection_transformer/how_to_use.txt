@@ -40,33 +40,16 @@ source .venv/bin/activate
 4) Train the model
 ------------------
 Replace paths and hyperparameters as needed. The scripts will create a `checkpoints/` folder if it does not exist.
-Config knobs and where they live:
-- `src/config.py::TrainingConfig` defines defaults for `image_size`, `num_queries`, `d_model`, attention heads, feedforward width, and dropout.
-- CLI flags in `scripts/train.(sh|ps1)` map directly to `TrainingConfig` fields.
-- Dataset root must contain `images/` and `labels/` under the same parent directory.
-
-Typical starting hyperparameters (balanced for accuracy vs. latency):
-- `--image-size 512` for accuracy, `256` or `320` for faster FPS.
-- `--num-queries 25` for crowded scenes, `15` for lighter loads.
-- `--batch-size 8-16` if GPU memory allows; `4` on CPU.
-- `--lr 1e-4` with `--weight-decay 1e-4` (defaults).
-
-Example commands with explicit paths and tuning knobs:
 
 Windows (PowerShell):
 ```pwsh
-./scripts/train.ps1 C:\data\yolo --epochs 50 --batch-size 16 --num-classes 80 --num-queries 25 --image-size 416 --lr 0.0001 --weight-decay 0.0001 --device cpu
+./scripts/train.ps1 C:\data\yolo --epochs 50 --batch-size 16 --num-classes 80 --num-queries 25 --device cpu
 ```
 
 Linux/macOS (Bash):
 ```bash
-./scripts/train.sh /path/to/data/yolo --epochs 50 --batch-size 16 --num-classes 80 --num-queries 25 --image-size 416 --lr 0.0001 --weight-decay 0.0001 --device cpu
+./scripts/train.sh /path/to/data/yolo --epochs 50 --batch-size 16 --num-classes 80 --num-queries 25 --device cpu
 ```
-
-Hyperparameter sweep tips:
-- Increase `--d-model` to 192 and `--num-encoder-layers` to 6 for accuracy-centric runs.
-- Decrease `--num-queries` to 15 and `--image-size` to 320 when chasing throughput on CPU or edge GPUs.
-- Keep `--dropout` at `0.1` for stability; raise slightly when overfitting small datasets.
 
 Notes:
 - Set `--device cuda` if you have a CUDA GPU available.
@@ -129,30 +112,8 @@ Linux/macOS (Bash):
 Performance tips:
 - Lower `--image-size` (e.g., 416) and `--num-queries` (e.g., 15) to improve FPS.
 - Prefer GPU (`--device cuda`) for 60 FPS targets; CPU mode is best for functional tests.
-- Run the latency tool after training to tune quantization and patch sizes:
-  - Bash: `./scripts/benchmark.sh checkpoints/det_transformer.pt /path/to/data/yolo --device cuda --iterations 50 --quantize`
-  - PowerShell: `./scripts/benchmark.ps1 -Checkpoint checkpoints/det_transformer.pt -DataDir C:\data\yolo -Device cuda -Iterations 50 -Quantize`
 
-9) Streamlit dashboard (FusionNet)
----------------------------------
-- Launch the dashboard to visualize class-wise counts, RMS velocity metrics from the GNN, and explainability JSONL artifacts:
-  - Linux/macOS: `./scripts/dashboard.sh`
-  - Windows: `./scripts/dashboard.ps1 -Headless`
-- The dashboard reads from `artifacts/metrics.jsonl` (written by inference/realtime), `artifacts/attention.jsonl` (if you log attention maps), and optionally `artifacts/live.mp4` if you record frames.
-- Use the sidebar inputs to point the dashboard to alternative artifact paths when running in Codespaces or Kaggle outputs.
-
-API token map (set as environment variables or secrets):
-- `FUSIONNET_API_TOKEN`: required by `src/api.py` (launched via `scripts/api_server.sh` or `.ps1`) and reused by Kaggle when pushing checkpoints/metrics.
-- `FUSIONNET_BACKEND_URL`: URL to the FastAPI service (Codespaces port-forward or on-prem), consumed inside `kaggle_fusionnet_notebook.py`.
-- `FUSIONNET_FRONTEND_URL`: Dashboard-facing endpoint; set to the same value as backend if using one service.
-
-10) Kaggle TPU/GPU notebook (FusionNet)
---------------------------------------
-- Copy `kaggle_fusionnet_notebook.py` into a new Kaggle notebook. Set `FUSIONNET_BACKEND_URL`, `FUSIONNET_FRONTEND_URL`, and `FUSIONNET_API_TOKEN` as environment variables for checkpoint uploads and metric pushes.
-- The notebook keeps the encoder-only transformer + memory fusion and trains with YOLO data stored in `/kaggle/input/...`.
-- After training, download the saved `fusionnet_epoch*.pt` files or use the provided sync stub to push them back to the FastAPI service running in Codespaces or on-prem.
-
-11) Codespaces quickstart
+9) Codespaces quickstart
 ------------------------
 1. Open a terminal in the Codespace and run:
    ```bash
@@ -172,13 +133,7 @@ API token map (set as environment variables or secrets):
    ./scripts/realtime.sh checkpoints/det_transformer.pt --labels person car dog --camera 0 --confidence 0.4
    ```
 
-12) Backend/front-end API server
---------------------------------
-- Linux/macOS/Codespaces: `./scripts/api_server.sh` (respects `$PORT` and `FUSIONNET_API_TOKEN`).
-- Windows: `./scripts/api_server.ps1 -Port 8000`.
-- Kaggle notebook uses `FUSIONNET_BACKEND_URL` + `FUSIONNET_API_TOKEN` to register datasets and upload checkpoints; metrics can be pushed via `FUSIONNET_FRONTEND_URL/frontend/metrics/push`.
-
-13) Troubleshooting
+10) Troubleshooting
 -------------------
 - **Missing data**: Ensure both `images/` and `labels/` exist and have matching basenames.
 - **No camera found**: Try a different `--camera` index or use `--video <path>`.

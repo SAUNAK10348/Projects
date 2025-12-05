@@ -20,13 +20,10 @@ class PipelineArtifacts:
 
 
 class FusionNetPipeline:
-    def __init__(self, model: DetectionTransformer, label_map: List[str], memory_path: Path | None = None):
+    def __init__(self, model: DetectionTransformer, label_map: List[str]):
         self.model = model
         self.label_map = label_map
         self.memory = KnowledgeGraphMemory(device=str(next(model.parameters()).device))
-        if memory_path and memory_path.exists():
-            self.memory.load(memory_path)
-        self._memory_path = memory_path
         self.analytics = GraphAnalytics(label_map)
         self.artifacts = PipelineArtifacts()
         self.artifacts.metrics_path.parent.mkdir(parents=True, exist_ok=True)
@@ -64,6 +61,4 @@ class FusionNetPipeline:
                 "rms_velocity_classwise": metrics.rms_velocity_classwise,
             },
         )
-        if self._memory_path:
-            self.memory.save(self._memory_path)
         return {"detections": detections, "metrics": metrics}

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Dict, List, Tuple
 
 import torch
@@ -73,18 +72,6 @@ class KnowledgeGraphMemory:
             retrieved_feat += gathered * 1.0  # additive conditioning
             retrieved_logits += top_sim.mean(dim=-1, keepdim=True)
         return retrieved_feat, retrieved_logits
-
-    def save(self, path: str | Path) -> None:
-        serialized = {cls: {"embeddings": entry.embeddings.cpu(), "labels": entry.labels.cpu()} for cls, entry in self.store.items()}
-        torch.save({"max_per_class": self.max_per_class, "store": serialized}, path)
-
-    def load(self, path: str | Path) -> None:
-        blob = torch.load(path, map_location=self.device)
-        self.max_per_class = blob.get("max_per_class", self.max_per_class)
-        restored = {}
-        for cls, payload in blob.get("store", {}).items():
-            restored[int(cls)] = MemoryEntry(embeddings=payload["embeddings"].to(self.device), labels=payload["labels"].to(self.device))
-        self.store = restored
 
     def summary(self) -> List[str]:
         return [f"class {cls}: {entry.embeddings.size(0)} embeddings" for cls, entry in self.store.items()]
