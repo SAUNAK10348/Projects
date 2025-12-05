@@ -41,22 +41,14 @@ source .venv/bin/activate
 ------------------
 Replace paths and hyperparameters as needed. The scripts will create a `checkpoints/` folder if it does not exist.
 
-Typical starting hyperparameters (balanced for accuracy vs. latency):
-- `--image-size 512` for accuracy, `256` or `320` for faster FPS.
-- `--num-queries 25` for crowded scenes, `15` for lighter loads.
-- `--batch-size 8-16` if GPU memory allows; `4` on CPU.
-- `--lr 1e-4` with `--weight-decay 1e-4` (defaults).
-
-Example commands with explicit paths and tuning knobs:
-
 Windows (PowerShell):
 ```pwsh
-./scripts/train.ps1 C:\data\yolo --epochs 50 --batch-size 16 --num-classes 80 --num-queries 25 --image-size 416 --lr 0.0001 --weight-decay 0.0001 --device cpu
+./scripts/train.ps1 C:\data\yolo --epochs 50 --batch-size 16 --num-classes 80 --num-queries 25 --device cpu
 ```
 
 Linux/macOS (Bash):
 ```bash
-./scripts/train.sh /path/to/data/yolo --epochs 50 --batch-size 16 --num-classes 80 --num-queries 25 --image-size 416 --lr 0.0001 --weight-decay 0.0001 --device cpu
+./scripts/train.sh /path/to/data/yolo --epochs 50 --batch-size 16 --num-classes 80 --num-queries 25 --device cpu
 ```
 
 Notes:
@@ -120,28 +112,8 @@ Linux/macOS (Bash):
 Performance tips:
 - Lower `--image-size` (e.g., 416) and `--num-queries` (e.g., 15) to improve FPS.
 - Prefer GPU (`--device cuda`) for 60 FPS targets; CPU mode is best for functional tests.
-- Run the latency tool after training to tune quantization and patch sizes:
-  - Bash: `./scripts/benchmark.sh checkpoints/det_transformer.pt /path/to/data/yolo --device cuda --iterations 50 --quantize`
-  - PowerShell: `./scripts/benchmark.ps1 -Checkpoint checkpoints/det_transformer.pt -DataDir C:\data\yolo -Device cuda -Iterations 50 -Quantize`
 
-9) Streamlit dashboard (FusionNet)
----------------------------------
-- Launch the dashboard to visualize class-wise counts, RMS velocity metrics from the GNN, and explainability JSONL artifacts:
-  - Linux/macOS: `./scripts/dashboard.sh`
-  - Windows: `./scripts/dashboard.ps1 -Headless`
-- The dashboard reads from `artifacts/metrics.jsonl` (written by inference/realtime), `artifacts/attention.jsonl` (if you log attention maps), and optionally `artifacts/live.mp4` if you record frames.
-- Use the sidebar inputs to point the dashboard to alternative artifact paths when running in Codespaces or Kaggle outputs.
-
-10) Kaggle TPU/GPU notebook (FusionNet)
---------------------------------------
-- Copy `kaggle_fusionnet_notebook.py` into a new Kaggle notebook. Set `API_ENDPOINT` and `API_TOKEN` to sync checkpoints to your Codespace/backend via your own API.
-- The notebook keeps the encoder-only transformer + memory fusion and trains with YOLO data stored in `/kaggle/input/...`.
-- After training, download the saved `fusionnet_epoch*.pt` files or use the provided sync stub to push them back to GitHub.
-- API tokens/keys:
-  - `kaggle_fusionnet_notebook.py` expects `API_ENDPOINT` and `API_TOKEN` (placeholders in the file) for syncing checkpoints.
-  - Any backend script you wire up to receive checkpoints should expose matching tokens; keep them in environment variables when running the notebook.
-
-11) Codespaces quickstart
+9) Codespaces quickstart
 ------------------------
 1. Open a terminal in the Codespace and run:
    ```bash

@@ -32,4 +32,3 @@ class InferenceConfig:
     image_size: int = 128
     num_queries: int = 25
     device: str = "cpu"
-    memory_path: Path | None = None
