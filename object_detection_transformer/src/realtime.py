@@ -10,8 +10,7 @@ import torch
 from PIL import Image
 from torchvision import transforms
 
-from .inference import load_model
-from .pipeline import FusionNetPipeline
+from .inference import load_model, run_inference
 
 
 class RealtimeConfig(argparse.Namespace):
@@ -83,7 +82,6 @@ def main() -> None:
     config = parse_args()
     config.label_map = config.labels
     model = load_model(config)
-    pipeline = FusionNetPipeline(model=model, label_map=config.label_map)
 
     if config.video is not None:
         source = str(config.video)
@@ -106,8 +104,7 @@ def main() -> None:
 
         frame_count += 1
         tensor = preprocess_frame(frame, config.image_size, config.device)
-        outputs = pipeline.forward(tensor)
-        predictions = outputs["detections"]
+        predictions = run_inference(model, tensor, config.label_map)
         draw_predictions(frame, predictions, config.confidence)
 
         if not config.no_window:
@@ -117,9 +114,7 @@ def main() -> None:
 
         now = time.time()
         if now - last_print >= 1.0:
-            print(
-                f"Processed {frame_count} frames | Last scores: {[p['score'] for p in predictions[:3]]} | RMS vel: {outputs['metrics'].rms_velocity_overall:.3f}"
-            )
+            print(f"Processed {frame_count} frames | Last scores: {[p['score'] for p in predictions[:3]]}")
             last_print = now
 
         if config.max_frames and frame_count >= config.max_frames:
