@@ -1,0 +1,94 @@
+Technical Report: Tensor-Valued Object Detection Transformer
+===========================================================
+
+1) Purpose and scope
+- This report describes the end-to-end design of the object-detection transformer implemented in this repository. It covers the data path, model architecture, training/inference routines, intermediate tensors, files, and deployment hooks for real-time use.
+- The codebase is PyTorch-based and targets YOLO-formatted datasets while keeping latency low enough for 60 FPS pipelines.
+
+2) Technology stack
+- PyTorch / TorchVision for tensor ops, dataloading, augmentations, and model layers.
+- Python standard library for configuration, argparse CLIs, and filesystem utilities.
+- OpenCV (via `src.realtime`) for webcam/video streaming overlays in real-time demos.
+- Scripts are provided for Windows (PowerShell) and Linux/macOS (Bash) to set up virtual environments, train, and run real-time inference.
+
+3) Data inputs, outputs, and intermediate tensors
+- Dataset format: `data_dir/images/*.jpg` paired with `data_dir/labels/*.txt` in YOLO format (`class x_center y_center width height` normalized to [0,1]).
+- Training/inference input tensor: `(B, 3, H, W)` float32 in RGB after resizing to `image_size`.
+- Patch tokens (encoder input): `(B, N, token_size)` where `N = ceil((H*W)/token_size)` after padding to a multiple of `token_size` (see `patchify`).
+- Encoder output (memory): `(B, N, d_model)` after linear projection, positional encoding, and stacked TransformerEncoder layers.
+- Query tokens: `(B, num_queries, d_model)` learned embeddings broadcast per batch and concatenated to the encoder sequence.
+- Encoded queries: `(B, num_queries, d_model)` contextualized query features after the encoder stack.
+- Heads:
+  * Class logits: `(B, num_queries, num_classes)`.
+  * Bounding boxes: `(B, num_queries, 4)` with sigmoid-normalized xywh in [0,1].
+- Training loss combines CrossEntropy (with ignore_index=-1 for missing detections) and Smooth L1 for boxes.
+- Checkpoint output: `checkpoints/det_transformer.pt` containing `model_state_dict` and training config.
+- Inference output: decoded list of dictionaries per query `{score, class, box_xywh}`.
+
+4) Preprocessing and encoding pipeline
+- `YoloDataset` (src/dataset.py)
+  * Validates `images/` and `labels/` subdirectories and fails fast if empty.
+  * Applies deterministic resize to `(image_size, image_size)` then `ToTensor()` to keep the pipeline reproducible across OSes.
+  * Pads label tensors to `max_detections=num_queries` with `class_id=-1` so batches remain rectangular.
+- `collate_yolo` stacks images, boxes, and class tensors into batch tensors for the DataLoader.
+- `patchify` (src/encoder.py) flattens `(B, 3, H, W)` into a 1D sequence, pads to a multiple of `token_size`, and reshapes to `(B, N, token_size)`.
+- `ImageEncoder` applies a Linear projection to `d_model`, adds learnable positional embeddings (length 4096), and feeds the sequence through stacked `TransformerEncoder` layers with GELU activations.
+
+5) Transformer heads (encoder-only stack)
+- `DetectionTransformer` (src/model.py) appends learned queries directly to the token sequence so the architecture stays encoder-only while still producing detection tokens.
+- Learned query embeddings (`num_queries`) probe the encoder memory and are fed to:
+  * `class_head`: Linear → class logits.
+  * `box_head`: Linear → ReLU → Linear → Sigmoid to predict normalized xywh boxes.
+- `explain()` exports encoder attention projection weights for interpretability and debugging.
+
+6) Training methodology (src/train.py)
+- Configuration is parsed from CLI flags (epochs, batch size, num classes/queries, device, LR, weight decay, image size, workers, log frequency).
+- DataLoader uses `collate_yolo` to keep shapes consistent and supports multiprocessing via `num_workers`.
+- Loss: sum of CrossEntropy (ignoring `-1` padded labels) and Smooth L1 regression for boxes; gradients are clipped to `max_norm=1.0` for stability.
+- Optimizer: AdamW with configurable weight decay; training prints per-step loss every `log_every` steps and average loss per epoch.
+- Checkpoints are saved after training with both weights and hyperparameters for reproducibility and resuming.
+
+7) Inference and real-time execution
+- Inference (src/inference.py): loads a checkpoint, reconstructs the model with saved hyperparameters, resizes input images to `image_size`, runs a forward pass, applies softmax to class logits, and decodes the top prediction per query.
+- Real-time (src/realtime.py): opens a webcam index or video file via OpenCV, preprocesses each frame like inference, overlays bounding boxes and scores, and supports headless mode (`--no-window`) for servers/Codespaces where GUI display is unavailable.
+- Both paths share the same transformer weights; real-time performance can be tuned via `--image-size`, `--num-queries`, and device selection (CPU/GPU).
+
+8) File-by-file reference
+- `src/dataset.py`: YOLO dataset reader, label padding, and batch collation.
+- `src/encoder.py`: image patchification, linear projection, positional encoding, Transformer encoder stack, attention export.
+- `src/model.py`: detection transformer combining encoder, learned queries, classification and box heads.
+- `src/train.py`: CLI-driven training loop, loss computation, optimizer, checkpointing.
+- `src/inference.py`: checkpoint load, preprocessing, forward pass, and decoded outputs.
+- `src/realtime.py`: streaming inference with OpenCV overlays and optional headless logging.
+- `scripts/*.sh` / `scripts/*.ps1`: cross-platform environment setup, training, and real-time launchers.
+- `README.md`, `how_to_use.txt`, `use.md`: quickstarts and Codespaces guides; this report complements them with architectural depth.
+
+9) Block diagram (data + model flow)
+
+[Images/YOLO labels]
+      ↓ (YoloDataset: resize → tensor; label pad)
+[Batched tensors (B,3,H,W) + boxes/classes]
+      ↓ (patchify → linear → positional)
+[Sequence tokens (B,N,d_model)]
+      ↓ (TransformerEncoder × L)
+[Encoder memory + queries (B,N+Q,d_model)]
+      ↓                     ↓
+[class_head]            [box_head]
+[class logits]          [xywh boxes]
+      ↓
+[Loss/metrics during train]  [Detections during inference]
+
+Block explanations
+- Images/YOLO labels: raw dataset files paired by basename; labels may be missing per image but are padded to fixed length.
+- YoloDataset: ensures directories exist, converts images to tensors, and pads label arrays so every batch is rectangular.
+- Patchify + projection + positional: flattens spatial grid, pads to `token_size` multiples, projects to `d_model`, and adds learnable positional embeddings to preserve spatial context.
+- TransformerEncoder: multi-head self-attention + FFN layers extract global features across the sequence (queries are included in the same sequence to keep the model encoder-only).
+- Learned queries: trainable embeddings representing candidate detections; duplicated per batch and processed alongside image tokens.
+- Class/box heads: lightweight heads map decoded features to class scores and normalized bounding boxes.
+- Loss/metrics or detections: during training, CrossEntropy + Smooth L1 supervise predictions; during inference, softmax + sigmoid outputs become scored detections for downstream consumption.
+
+10) Deployment and performance considerations
+- Latency levers: reduce `image_size`, `num_queries`, encoder layers, or `d_model` to hit tighter FPS budgets; pin to `--device cuda` where available.
+- Stability: gradient clipping at 1.0 prevents exploding gradients; positional capacity is capped at 4096 tokens (sequence beyond this raises an error).
+- Explainability: `explain()` returns encoder attention projection weights to trace what the model emphasizes; can be logged or visualized externally.
+
