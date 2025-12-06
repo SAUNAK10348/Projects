@@ -180,24 +180,14 @@ async def frontend_metrics(_: None = Depends(_require_token)) -> Dict:
 
 @app.post("/frontend/infer")
 async def frontend_infer(
-    image_path: str | None = Form(None),
-    image_file: UploadFile | None = File(None),
+    image_path: str = Form(...),
     _: None = Depends(_require_token),
 ) -> Dict:
     if state.pipeline is None:
         raise HTTPException(status_code=400, detail="Train or load a checkpoint first")
-    if image_file is not None:
-        upload_dir = Path("artifacts/uploads")
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        image = upload_dir / image_file.filename
-        with image.open("wb") as f:
-            shutil.copyfileobj(image_file.file, f)
-    elif image_path:
-        image = Path(image_path)
-        if not image.exists():
-            raise HTTPException(status_code=404, detail=f"Image not found: {image}")
-    else:
-        raise HTTPException(status_code=400, detail="Provide image_path or upload an image")
+    image = Path(image_path)
+    if not image.exists():
+        raise HTTPException(status_code=404, detail=f"Image not found: {image}")
     tensor = tv_io.read_image(str(image)).float() / 255.0
     transform = tv_transforms.Resize((state.image_size, state.image_size))
     tensor = transform(tensor)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import List, Tuple
 
 from PIL import Image
 import torch
@@ -33,20 +33,8 @@ class YoloDataset(Dataset):
         self.data_dir = data_dir
         self.image_size = image_size
         self.max_detections = max_detections
-
-        images_dir = data_dir / "images"
-        labels_dir = data_dir / "labels"
-        if not images_dir.exists():
-            raise FileNotFoundError(f"Missing images directory: {images_dir}")
-        if not labels_dir.exists():
-            raise FileNotFoundError(f"Missing labels directory: {labels_dir}")
-
-        image_exts = ("*.jpg", "*.jpeg", "*.png", "*.bmp")
-        self.image_paths = sorted(self._gather_many(images_dir, image_exts))
-        if not self.image_paths:
-            raise FileNotFoundError(f"No training images found in {images_dir}")
-        self.label_paths = {p.stem: p for p in labels_dir.glob("*.txt")}
-        self.label_map = self._infer_label_map(labels_dir)
+        self.image_paths = sorted((data_dir / "images").glob("*.jpg"))
+        self.label_paths = {p.stem: p for p in (data_dir / "labels").glob("*.txt")}
         self.transforms = transforms_override or transforms.Compose(
             [
                 transforms.Resize((image_size, image_size)),
@@ -67,24 +55,6 @@ class YoloDataset(Dataset):
         boxes, classes = self._load_labels(label_path)
         return image_tensor, boxes, classes
 
-    def _gather_many(self, directory: Path, patterns: Iterable[str]):
-        for pattern in patterns:
-            yield from directory.glob(pattern)
-
-    def _infer_label_map(self, labels_dir: Path) -> List[str]:
-        classes = set()
-        for label_file in labels_dir.glob("*.txt"):
-            try:
-                with label_file.open("r", encoding="utf-8") as handle:
-                    for line in handle:
-                        if not line.strip():
-                            continue
-                        class_id = line.split()[0]
-                        classes.add(int(float(class_id)))
-            except OSError:
-                continue
-        return [str(c) for c in sorted(classes)] if classes else []
-
     def _load_labels(self, label_path: Path | None) -> Tuple[Tensor, Tensor]:
         boxes = torch.zeros((self.max_detections, 4), dtype=torch.float32)
         classes = torch.full((self.max_detections,), -1, dtype=torch.long)
@@ -96,10 +66,7 @@ class YoloDataset(Dataset):
             lines = [line.strip() for line in handle.readlines() if line.strip()]
 
         for i, line in enumerate(lines[: self.max_detections]):
-            parts = line.split()
-            if len(parts) != 5:
-                continue
-            class_id, x_center, y_center, width, height = map(float, parts)
+            class_id, x_center, y_center, width, height = map(float, line.split())
             boxes[i] = torch.tensor([x_center, y_center, width, height], dtype=torch.float32)
             classes[i] = int(class_id)
 

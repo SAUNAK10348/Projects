@@ -14,6 +14,7 @@ class TrainingConfig:
     d_model: int = 128
     nhead: int = 4
     num_encoder_layers: int = 4
+    num_decoder_layers: int = 4
     dim_feedforward: int = 256
     dropout: float = 0.1
     lr: float = 1e-4
@@ -31,4 +32,3 @@ class InferenceConfig:
     image_size: int = 128
     num_queries: int = 25
     device: str = "cpu"
-    memory_path: Path | None = None
