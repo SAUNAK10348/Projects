@@ -10,7 +10,6 @@ from torchvision import transforms
 
 from .config import InferenceConfig
 from .model import DetectionTransformer
-from .pipeline import FusionNetPipeline
 
 
 def load_model(config: InferenceConfig) -> DetectionTransformer:
@@ -22,6 +21,7 @@ def load_model(config: InferenceConfig) -> DetectionTransformer:
         d_model=model_config.get("d_model", 128),
         nhead=model_config.get("nhead", 4),
         num_encoder_layers=model_config.get("num_encoder_layers", 4),
+        num_decoder_layers=model_config.get("num_decoder_layers", 4),
         dim_feedforward=model_config.get("dim_feedforward", 256),
         dropout=model_config.get("dropout", 0.1),
     )
@@ -40,11 +40,23 @@ def prepare_image(image_path: Path, image_size: int) -> torch.Tensor:
     return tfm(image).unsqueeze(0)
 
 
-def run_inference(model: DetectionTransformer, image: torch.Tensor, label_map: List[str], memory_path: Path | None = None):
-    pipeline = FusionNetPipeline(model=model, label_map=label_map, memory_path=memory_path)
+def run_inference(model: DetectionTransformer, image: torch.Tensor, label_map: List[str]):
     with torch.no_grad():
-        outputs = pipeline.forward(image)
-    return outputs
+        outputs = model(image)
+    class_logits = outputs["class_logits"].softmax(dim=-1)
+    box_preds = outputs["boxes"]
+
+    confidences, classes = class_logits.max(dim=-1)
+    decoded = []
+    for score, cls_idx, box in zip(confidences[0], classes[0], box_preds[0]):
+        decoded.append(
+            {
+                "score": float(score.item()),
+                "class": label_map[int(cls_idx.item())],
+                "box_xywh": box.tolist(),
+            }
+        )
+    return decoded
 
 
 def parse_args() -> InferenceConfig:
@@ -55,7 +67,6 @@ def parse_args() -> InferenceConfig:
     parser.add_argument("--image-size", type=int, default=128)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--num-queries", type=int, default=25)
-    parser.add_argument("--memory-path", type=Path, default=None, help="Optional path to persist the knowledge graph memory")
     args = parser.parse_args()
 
     return InferenceConfig(
@@ -65,7 +76,6 @@ def parse_args() -> InferenceConfig:
         image_size=args.image_size,
         device=args.device,
         num_queries=args.num_queries,
-        memory_path=args.memory_path,
     )
 
 
@@ -75,10 +85,9 @@ def main() -> None:
     image_tensor = prepare_image(config.image, config.image_size)
     image_tensor = image_tensor.to(config.device)
 
-    outputs = run_inference(model, image_tensor, config.label_map, memory_path=getattr(config, "memory_path", None))
-    for pred in outputs["detections"]:
+    predictions = run_inference(model, image_tensor, config.label_map)
+    for pred in predictions:
         print(pred)
-    print("GNN metrics:", outputs["metrics"])
 
 
 if __name__ == "__main__":
