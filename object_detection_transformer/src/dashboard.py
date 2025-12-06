@@ -1,13 +1,26 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Dict, List
 
 import pandas as pd
-import requests
 import streamlit as st
+
+from .gnn import GNNMetrics
+
+
+def load_metrics(path: Path) -> List[Dict]:
+    if not path.exists():
+        return []
+    rows = []
+    with path.open("r", encoding="utf-8") as fp:
+        for line in fp:
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return rows
 
 
 def render_overview(metrics: List[Dict]) -> None:
@@ -54,150 +67,21 @@ def render_explainability(entries: List[Dict]) -> None:
     st.json(latest.get("attention", {}))
 
 
-def load_metrics_local(path: Path) -> List[Dict]:
-    if not path.exists():
-        return []
-    rows = []
-    with path.open("r", encoding="utf-8") as fp:
-        for line in fp:
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return rows
-
-
-def fetch_backend(endpoint: str, base_url: str, token: str | None, **kwargs):
-    headers = kwargs.pop("headers", {})
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    try:
-        resp = requests.request(kwargs.pop("method", "get"), f"{base_url}{endpoint}", headers=headers, timeout=60, **kwargs)
-    except requests.RequestException as exc:
-        st.error(f"Backend request failed: {exc}")
-        return None
-    if resp.status_code >= 400:
-        st.error(f"Backend returned {resp.status_code}: {resp.text}")
-        return None
-    if "application/json" in resp.headers.get("content-type", ""):
-        return resp.json()
-    return resp.text
-
-
-def render_dataset_controls(base_url: str, token: str | None) -> None:
-    st.subheader("Dataset Upload & Registration")
-    dataset_zip = st.file_uploader("Upload YOLO dataset (.zip with images/ and labels/)", type=["zip"])
-    destination = st.text_input("Destination on backend", "data/uploaded")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        image_size = st.number_input("Image size", min_value=64, max_value=1024, value=256, step=16)
-    with col2:
-        max_detections = st.number_input("Max detections", min_value=1, max_value=200, value=25, step=1)
-    with col3:
-        register_now = st.checkbox("Register after upload", value=True)
-
-    if st.button("Upload dataset to backend"):
-        if dataset_zip is None:
-            st.error("Please select a dataset archive first.")
-        else:
-            files = {"archive": (dataset_zip.name, dataset_zip.getvalue(), "application/zip")}
-            data = {"destination": destination}
-            result = fetch_backend("/dataset/upload", base_url, token, method="post", files=files, data=data)
-            if result:
-                st.success(f"Uploaded to {result.get('dataset_root', destination)}")
-                if register_now:
-                    reg_payload = {
-                        "dataset_root": result.get("dataset_root", destination),
-                        "image_size": image_size,
-                        "max_detections": max_detections,
-                    }
-                    reg_result = fetch_backend("/dataset/register", base_url, token, method="post", data=reg_payload)
-                    if reg_result:
-                        st.success(f"Registered {reg_result.get('samples', 0)} samples with {reg_result.get('num_classes', 0)} classes")
-
-
-def render_training_controls(base_url: str, token: str | None) -> None:
-    st.subheader("Training")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        epochs = st.number_input("Epochs", min_value=1, max_value=200, value=5, step=1)
-        batch_size = st.number_input("Batch size", min_value=1, max_value=128, value=4, step=1)
-    with c2:
-        num_queries = st.number_input("Num queries", min_value=4, max_value=256, value=25, step=1)
-        lr = st.number_input("Learning rate", min_value=1e-6, max_value=1e-2, value=1e-4, step=1e-5, format="%.6f")
-    with c3:
-        weight_decay = st.number_input("Weight decay", min_value=0.0, max_value=1e-2, value=1e-4, step=1e-5, format="%.6f")
-        device = st.selectbox("Device", ["cpu", "cuda"])
-
-    if st.button("Start training on backend"):
-        payload = {
-            "epochs": int(epochs),
-            "batch_size": int(batch_size),
-            "num_queries": int(num_queries),
-            "lr": lr,
-            "weight_decay": weight_decay,
-            "device": device,
-        }
-        result = fetch_backend("/train", base_url, token, method="post", data=payload)
-        if result:
-            st.success(f"Training completed. Checkpoint: {result.get('checkpoint', '')}")
-
-
-def render_inference_controls(base_url: str, token: str | None) -> None:
-    st.subheader("Single-image inference")
-    image = st.file_uploader("Upload image for inference", type=["jpg", "jpeg", "png"])
-    if st.button("Run inference"):
-        if image is None:
-            st.error("Please upload an image first.")
-        else:
-            files = {"image_file": (image.name, image.getvalue(), image.type or "application/octet-stream")}
-            result = fetch_backend("/frontend/infer", base_url, token, method="post", files=files)
-            if result:
-                st.success("Inference complete")
-                detections = result.get("detections", [])
-                st.write(detections)
-
-
-def render_metrics(metrics: List[Dict], explain_entries: List[Dict], video_path: Path) -> None:
-    render_overview(metrics)
-    render_video(video_path)
-    render_explainability(explain_entries)
-
-
 def main() -> None:
     st.set_page_config(page_title="FusionNet Dashboard", layout="wide")
-    backend_default = os.getenv("FUSIONNET_BACKEND_URL", "http://localhost:8000")
-    token_default = os.getenv("FUSIONNET_API_TOKEN", "")
-    st.sidebar.header("Backend")
-    backend_url = st.sidebar.text_input("Backend URL", backend_default)
-    api_token = st.sidebar.text_input("API token", token_default, type="password")
-    metrics_path = Path(st.sidebar.text_input("Local metrics JSONL", "artifacts/metrics.jsonl"))
+    metrics_path = Path(st.sidebar.text_input("Metrics JSONL", "artifacts/metrics.jsonl"))
     video_path = Path(st.sidebar.text_input("Video buffer", "artifacts/live.mp4"))
     explain_path = Path(st.sidebar.text_input("Explainability JSONL", "artifacts/attention.jsonl"))
-    use_backend_metrics = st.sidebar.checkbox("Fetch latest metrics from backend", value=True)
+    refresh_sec = st.sidebar.slider("Refresh hint (seconds)", min_value=2, max_value=15, value=5)
 
-    st.title("FusionNet Control Center")
-    st.caption("Upload data, kick off training, run inference, and visualize metrics from one place.")
+    metrics = load_metrics(metrics_path)
+    explains = load_metrics(explain_path)
 
-    render_dataset_controls(backend_url, api_token or None)
-    render_training_controls(backend_url, api_token or None)
-    render_inference_controls(backend_url, api_token or None)
-
-    st.divider()
-    st.header("Live Metrics & Explainability")
-    metrics = []
-    explains: List[Dict] = []
-    if use_backend_metrics:
-        latest = fetch_backend("/frontend/metrics", backend_url, api_token or None)
-        if latest:
-            metrics = [latest]
-    if not metrics:
-        metrics = load_metrics_local(metrics_path)
-    explains = load_metrics_local(explain_path)
-    render_metrics(metrics, explains, video_path)
-
+    render_overview(metrics)
+    render_video(video_path)
+    render_explainability(explains)
     st.caption(
-        "When launched via scripts/start_stack.*, the backend and dashboard run together so you can operate everything from this page."
+        "The dashboard reads JSONL metrics from disk. Streamlit's built-in rerun will refresh when you hit 'r' or the rerun icon."
     )
 
 
