@@ -11,6 +11,5 @@ if (-not (Test-Path .venv)) {
 }
 
 . ./.venv/Scripts/Activate.ps1
-$env:PYTHONPATH = "$ROOT;$env:PYTHONPATH"
 $headlessFlag = $Headless.IsPresent ? '--server.headless true' : ''
 streamlit run src/dashboard.py $headlessFlag

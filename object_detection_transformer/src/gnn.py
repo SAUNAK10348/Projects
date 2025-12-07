@@ -37,20 +37,11 @@ class GraphAggregator(nn.Module):
 
 
 class GraphAnalytics:
-    def __init__(self, label_map: List[str], seed: int | None = 0) -> None:
+    def __init__(self, label_map: List[str]) -> None:
         self.label_map = label_map
         self.prev_positions: Dict[str, Tensor] = {}
         self.smoothing = 0.9
         self.graph = nx.Graph()
-        self.seed = seed
-        self._gnn: GraphAggregator | None = None
-
-    def _init_gnn(self, d_model: int) -> None:
-        if self._gnn is None or self._gnn.projection[0].in_features != d_model:
-            if self.seed is not None:
-                torch.manual_seed(self.seed)
-            self._gnn = GraphAggregator(d_model=d_model)
-            self._gnn.eval()
 
     def build_graph(self, detections: List[Dict]) -> Tuple[Tensor, Tensor]:
         if len(detections) == 0:
@@ -70,10 +61,9 @@ class GraphAnalytics:
         feats, adjacency = self.build_graph(detections)
         if feats.numel() == 0:
             return GNNMetrics({}, 0.0, {}, 0, {})
-        self._init_gnn(d_model=feats.size(-1))
-        assert self._gnn is not None  # for type checkers
+        gnn = GraphAggregator(d_model=feats.size(-1))
         with torch.no_grad():
-            enriched = self._gnn(feats, adjacency)
+            enriched = gnn(feats, adjacency)
             velocities = torch.abs(enriched).mean(dim=-1)
         classwise_counts: Dict[str, int] = {}
         classwise_vel: Dict[str, List[float]] = {}
@@ -86,12 +76,7 @@ class GraphAnalytics:
         rms_classwise = {
             cls: float(torch.sqrt(torch.tensor(vals).pow(2).mean()).item()) for cls, vals in classwise_vel.items()
         }
-        all_velocities = [vel for values in classwise_vel.values() for vel in values]
-        overall_rms = (
-            float(torch.sqrt(torch.tensor(all_velocities, dtype=torch.float32).pow(2).mean()).item())
-            if all_velocities
-            else 0.0
-        )
+        overall_rms = float(torch.sqrt(torch.tensor(list(classwise_vel.values())).flatten().pow(2).mean()).item())
         return GNNMetrics(
             rms_velocity_classwise=rms_classwise,
             rms_velocity_overall=overall_rms,

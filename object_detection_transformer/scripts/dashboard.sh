@@ -10,6 +10,4 @@ if [ ! -d .venv ]; then
 fi
 source .venv/bin/activate
 
-export PYTHONPATH="$ROOT_DIR:$PYTHONPATH"
-
 streamlit run src/dashboard.py --server.headless true

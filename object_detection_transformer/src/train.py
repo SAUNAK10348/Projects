@@ -14,73 +14,20 @@ from .dataset import YoloDataset, collate_yolo
 from .model import DetectionTransformer
 
 
-def box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor:
-    """IoU for normalized xywh boxes."""
-    # convert to xyxy
-    def to_xyxy(b):
-        x_c, y_c, w, h = b.unbind(-1)
-        x1 = x_c - w / 2
-        y1 = y_c - h / 2
-        x2 = x_c + w / 2
-        y2 = y_c + h / 2
-        return torch.stack([x1, y1, x2, y2], dim=-1)
-
-    b1 = to_xyxy(boxes1)
-    b2 = to_xyxy(boxes2)
-    area1 = (b1[..., 2] - b1[..., 0]).clamp(min=0) * (b1[..., 3] - b1[..., 1]).clamp(min=0)
-    area2 = (b2[..., 2] - b2[..., 0]).clamp(min=0) * (b2[..., 3] - b2[..., 1]).clamp(min=0)
-    lt = torch.max(b1[..., None, :2], b2[..., :2])
-    rb = torch.min(b1[..., None, 2:], b2[..., 2:])
-    wh = (rb - lt).clamp(min=0)
-    inter = wh[..., 0] * wh[..., 1]
-    union = area1[..., None] + area2 - inter
-    return inter / union.clamp(min=1e-6)
-
-
-def greedy_match(pred_boxes: torch.Tensor, gt_boxes: torch.Tensor, gt_mask: torch.Tensor):
-    """Greedy IoU-based matching to align predictions with GT indices."""
-    valid_gt = gt_boxes[gt_mask]
-    if valid_gt.numel() == 0:
-        return torch.full((pred_boxes.size(0),), -1, device=pred_boxes.device, dtype=torch.long)
-    iou = box_iou(pred_boxes, valid_gt)  # (num_queries, num_gt)
-    match = torch.argmax(iou, dim=1)
-    mapped = torch.full((pred_boxes.size(0),), -1, device=pred_boxes.device, dtype=torch.long)
-    mapped[:] = match
-    return mapped
-
-
 def compute_loss(
     outputs, target_boxes, target_classes, num_classes: int, criterion: nn.Module
 ) -> torch.Tensor:
     class_logits = outputs["class_logits"]  # (B, num_queries, num_classes)
     pred_boxes = outputs["boxes"]  # (B, num_queries, 4)
 
-    loss_ce_total = 0.0
-    loss_bbox_total = 0.0
-    total_samples = class_logits.size(0)
+    # Match predictions to ground-truth by index; here we perform a naive positional match
+    # which keeps the code lightweight. Production systems should use Hungarian matching.
+    gt_classes = target_classes
+    gt_boxes = target_boxes
 
-    for sample_idx in range(total_samples):
-        gt_cls = target_classes[sample_idx]
-        gt_box = target_boxes[sample_idx]
-        valid_mask = gt_cls >= 0
-        # match each prediction to a GT index
-        assignment = greedy_match(pred_boxes[sample_idx], gt_box, valid_mask)
-        matched_classes = torch.full_like(gt_cls, -1)
-        matched_boxes = torch.zeros_like(gt_box)
-        for q in range(pred_boxes.size(1)):
-            gt_index = assignment[q]
-            if gt_index >= 0 and valid_mask[gt_index]:
-                matched_classes[q] = gt_cls[gt_index]
-                matched_boxes[q] = gt_box[gt_index]
-        # classification loss ignoring padding
-        loss_ce_total += criterion(class_logits[sample_idx], matched_classes)
-        box_mask = matched_classes >= 0
-        if box_mask.any():
-            loss_bbox_total += nn.functional.smooth_l1_loss(
-                pred_boxes[sample_idx][box_mask], matched_boxes[box_mask], reduction="mean"
-            )
-
-    loss = (loss_ce_total / total_samples) + (loss_bbox_total / max(total_samples, 1))
+    loss_ce = criterion(class_logits.flatten(0, 1), gt_classes.flatten())
+    loss_bbox = nn.functional.smooth_l1_loss(pred_boxes, gt_boxes, reduction="mean")
+    loss = loss_ce + loss_bbox
     return loss
 
 
@@ -163,6 +110,7 @@ def main() -> None:
         d_model=config.d_model,
         nhead=config.nhead,
         num_encoder_layers=config.num_encoder_layers,
+        num_decoder_layers=config.num_decoder_layers,
         dim_feedforward=config.dim_feedforward,
         dropout=config.dropout,
     ).to(device)

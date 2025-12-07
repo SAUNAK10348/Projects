@@ -16,8 +16,8 @@ Technical Report: Tensor-Valued Object Detection Transformer
 - Training/inference input tensor: `(B, 3, H, W)` float32 in RGB after resizing to `image_size`.
 - Patch tokens (encoder input): `(B, N, token_size)` where `N = ceil((H*W)/token_size)` after padding to a multiple of `token_size` (see `patchify`).
 - Encoder output (memory): `(B, N, d_model)` after linear projection, positional encoding, and stacked TransformerEncoder layers.
-- Query tokens: `(B, num_queries, d_model)` learned embeddings broadcast per batch and concatenated to the encoder sequence.
-- Encoded queries: `(B, num_queries, d_model)` contextualized query features after the encoder stack.
+- Decoder queries: `(B, num_queries, d_model)` learned embeddings broadcast per batch.
+- Decoder output: `(B, num_queries, d_model)` contextualized query features.
 - Heads:
   * Class logits: `(B, num_queries, num_classes)`.
   * Bounding boxes: `(B, num_queries, 4)` with sigmoid-normalized xywh in [0,1].
@@ -34,9 +34,9 @@ Technical Report: Tensor-Valued Object Detection Transformer
 - `patchify` (src/encoder.py) flattens `(B, 3, H, W)` into a 1D sequence, pads to a multiple of `token_size`, and reshapes to `(B, N, token_size)`.
 - `ImageEncoder` applies a Linear projection to `d_model`, adds learnable positional embeddings (length 4096), and feeds the sequence through stacked `TransformerEncoder` layers with GELU activations.
 
-5) Transformer heads (encoder-only stack)
-- `DetectionTransformer` (src/model.py) appends learned queries directly to the token sequence so the architecture stays encoder-only while still producing detection tokens.
-- Learned query embeddings (`num_queries`) probe the encoder memory and are fed to:
+5) Transformer decoder and heads
+- `DetectionTransformer` (src/model.py) instantiates the encoder plus a TransformerDecoder configured with multi-head attention (`nhead`) and feedforward width (`dim_feedforward`).
+- Learned query embeddings (`num_queries`) probe the encoder memory; decoder outputs are fed to:
   * `class_head`: Linear → class logits.
   * `box_head`: Linear → ReLU → Linear → Sigmoid to predict normalized xywh boxes.
 - `explain()` exports encoder attention projection weights for interpretability and debugging.
@@ -56,7 +56,7 @@ Technical Report: Tensor-Valued Object Detection Transformer
 8) File-by-file reference
 - `src/dataset.py`: YOLO dataset reader, label padding, and batch collation.
 - `src/encoder.py`: image patchification, linear projection, positional encoding, Transformer encoder stack, attention export.
-- `src/model.py`: detection transformer combining encoder, learned queries, classification and box heads.
+- `src/model.py`: detection transformer combining encoder, decoder, learned queries, classification and box heads.
 - `src/train.py`: CLI-driven training loop, loss computation, optimizer, checkpointing.
 - `src/inference.py`: checkpoint load, preprocessing, forward pass, and decoded outputs.
 - `src/realtime.py`: streaming inference with OpenCV overlays and optional headless logging.
@@ -71,7 +71,11 @@ Technical Report: Tensor-Valued Object Detection Transformer
       ↓ (patchify → linear → positional)
 [Sequence tokens (B,N,d_model)]
       ↓ (TransformerEncoder × L)
-[Encoder memory + queries (B,N+Q,d_model)]
+[Encoder memory (B,N,d_model)] ←
+      ↑                               ↑
+[Learned queries (B,Q,d_model)]  (skip for explain())
+      ↓ (TransformerDecoder × L)
+[Decoded queries (B,Q,d_model)]
       ↓                     ↓
 [class_head]            [box_head]
 [class logits]          [xywh boxes]
@@ -82,13 +86,14 @@ Block explanations
 - Images/YOLO labels: raw dataset files paired by basename; labels may be missing per image but are padded to fixed length.
 - YoloDataset: ensures directories exist, converts images to tensors, and pads label arrays so every batch is rectangular.
 - Patchify + projection + positional: flattens spatial grid, pads to `token_size` multiples, projects to `d_model`, and adds learnable positional embeddings to preserve spatial context.
-- TransformerEncoder: multi-head self-attention + FFN layers extract global features across the sequence (queries are included in the same sequence to keep the model encoder-only).
-- Learned queries: trainable embeddings representing candidate detections; duplicated per batch and processed alongside image tokens.
+- TransformerEncoder: multi-head self-attention + FFN layers extract global features across the sequence.
+- Learned queries: trainable embeddings representing candidate detections; duplicated per batch.
+- TransformerDecoder: cross-attends queries to encoder memory to refine object-centric features.
 - Class/box heads: lightweight heads map decoded features to class scores and normalized bounding boxes.
 - Loss/metrics or detections: during training, CrossEntropy + Smooth L1 supervise predictions; during inference, softmax + sigmoid outputs become scored detections for downstream consumption.
 
 10) Deployment and performance considerations
-- Latency levers: reduce `image_size`, `num_queries`, encoder layers, or `d_model` to hit tighter FPS budgets; pin to `--device cuda` where available.
+- Latency levers: reduce `image_size`, `num_queries`, encoder/decoder layers, or `d_model` to hit tighter FPS budgets; pin to `--device cuda` where available.
 - Stability: gradient clipping at 1.0 prevents exploding gradients; positional capacity is capped at 4096 tokens (sequence beyond this raises an error).
 - Explainability: `explain()` returns encoder attention projection weights to trace what the model emphasizes; can be logged or visualized externally.
 
