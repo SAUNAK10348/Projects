@@ -14,7 +14,7 @@ The code is deliberately lightweight so it can run on CPU for smoke tests while 
 - `scripts/` contains portable Bash helpers for Linux/macOS shells.
 - `requirements.txt` lists runtime dependencies.
 
-## Quickstart (windows)
+## Quickstart
 ```bash
 cd object_detection_transformer
 ./scripts/setup_workspace.sh
